@@ -1,44 +1,42 @@
-import unicodedata
-import string
-import re
 import random
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
-from torch import optim
 import torch.nn.functional as F
+from torch.autograd import Variable
+
 
 class Seq2Seq(nn.Module):
   EOS_token = 1
 
   def __init__(self,
-               input_size, output_size, hidden_size,
+               input_size, output_size, hidden_size, embedding_size,
                n_layers=1, dropout_p=0.5, attention=True, attention_length=30):
-  """
-  Args:
-    ...
-    attention_length: size of attention vector, limits precision of addressing
-    ...
-  """
+    """
+    Args:
+      ...
+      attention_length: size of attention vector, limits precision of addressing
+      ...
+    """
     super(Seq2Seq, self).__init__()
     self.n_layers = n_layers
     self.input_size = input_size
     self.output_size = output_size
     self.hidden_size = hidden_size
+    self.embedding_size = embedding_size
     self.dropout_p = dropout_p
     self.attention = attention
 
-    self.embedding = nn.Embedding(input_size, hidden_size)
+    self.embedding = nn.Embedding(self.input_size, self.embedding_size)
     self.dropout = nn.Dropout(self.dropout_p)
-    self.encoder = nn.GRU(hidden_size, hidden_size, num_layers=n_layers)
-    self.decoder = nn.GRU(self.hidden_size, self.hidden_size, num_layers=n_layers)
+    self.encoder = nn.GRU(self.embedding_size, self.hidden_size, num_layers=n_layers)
+    self.decoder = nn.GRU(self.embedding_size, self.hidden_size, num_layers=n_layers)
     self.projection = nn.Linear(self.hidden_size, self.output_size)
 
     if self.attention:
       self.attention_length = attention_length
-      self.att_query = nn.Linear(self.hidden_size * 2, self.attention_length)
+      self.att_query = nn.Linear(self.hidden_size + self.embedding_size, self.attention_length)
       self.att_keys = nn.Linear(self.hidden_size, self.attention_length)
-      self.decoder_projection = nn.Linear(self.hidden_size * 2, self.hidden_size)
+      self.decoder_projection = nn.Linear(self.hidden_size + self.embedding_size, self.embedding_size)
 
   def forward(self, inputs, targets=None, output_length=None, state=None, teacher_forcing_ratio=0.3):
     """Input is assumed to be LongTensor(seq_len x batch_size)"""
@@ -98,14 +96,13 @@ class Seq2Seq(nn.Module):
             att_distribution,
         ).squeeze(2)
 
-
-        _inp_c = torch.cat((embedded, att_context), 1)
-        decoder_input_concat = self.decoder_projection(_inp_c).unsqueeze(0)
+        decoder_input_with_att = torch.cat((embedded, att_context), 1)
+        decoder_input_ = self.decoder_projection(decoder_input_with_att).unsqueeze(0)
 
       else:
-        decoder_input_concat = embedded.unsqueeze(0)
+        decoder_input_ = embedded.unsqueeze(0)
 
-      decoder_output, decoder_state = self.decoder(decoder_input_concat, decoder_state)
+      decoder_output, decoder_state = self.decoder(decoder_input_, decoder_state)
 
       logits = self.projection(decoder_output.squeeze(0)).unsqueeze(0)
 
@@ -121,39 +118,3 @@ class Seq2Seq(nn.Module):
 
   def _init_hidden(self, batch_size=1):
     return Variable(torch.zeros(self.n_layers, batch_size, self.hidden_size))
-
-
-vocab_size = 10
-def generate_inputs(batch_size=10, seq_len=10):
-  batch = []
-  while True:
-    while len(batch) < batch_size:
-      batch.append([random.randint(3, vocab_size-1) for _ in range(seq_len)])
-    inputs = Variable(torch.LongTensor(batch)).transpose(1, 0).contiguous()
-    targets = inputs.clone()
-    yield inputs, targets
-    batch = []
-
-
-if __name__ == '__main__':
-
-  model = Seq2Seq(vocab_size, vocab_size, 100, n_layers=5, attention=False)
-
-  # opt = optim.SGD(model.parameters(), lr=0.01, momentum=0.01)
-  opt = optim.Adam(model.parameters())
-  criterion = nn.CrossEntropyLoss()
-
-  model.train()
-  for i, (inputs, targets) in enumerate(generate_inputs()):
-    opt.zero_grad()
-    logits = model(inputs, targets=targets)
-    length = logits.size()[2]
-    loss = criterion(logits.view(-1, length), targets.view(-1))
-    loss.backward()
-    opt.step()
-
-    if i % 100 == 0:
-      _, v = logits.data.topk(1)
-      fc = v.squeeze(2).numpy().T.tolist()
-      tg = targets.data.numpy().T.tolist()
-      print("%.4f\n  predict: %s\n  target:  %s" % (loss.data[0], fc, tg))
