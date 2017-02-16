@@ -10,7 +10,8 @@ class Seq2Seq(nn.Module):
 
   def __init__(self,
                input_size, output_size, hidden_size, embedding_size,
-               n_layers=1, dropout_p=0.5, attention=True, attention_length=30):
+               n_layers=1, dropout_p=0.5, attention_length=30,
+               attention=True, use_cuda=False):
     """
     Args:
       ...
@@ -25,6 +26,7 @@ class Seq2Seq(nn.Module):
     self.embedding_size = embedding_size
     self.dropout_p = dropout_p
     self.attention = attention
+    self.use_cuda = use_cuda
 
     self.embedding = nn.Embedding(self.input_size, self.embedding_size)
     self.dropout = nn.Dropout(self.dropout_p)
@@ -52,7 +54,7 @@ class Seq2Seq(nn.Module):
       assert output_length is not None
 
     if state is None:
-      state = self._init_hidden(batch_size=batch_size)
+      state = self._init_state(batch_size=batch_size)
 
     encoder_inputs = self.dropout(self.embedding(inputs))
     # encoder_inputs [seq_len, batch_size, embedding_size]
@@ -75,10 +77,14 @@ class Seq2Seq(nn.Module):
       if random.random() < teacher_forcing_ratio:
         feed_previous = False
 
-    output_logits = Variable(torch.zeros(output_length, batch_size, self.output_size)).contiguous()
-
     decoder_state = encoder_state
-    decoder_input = Variable(torch.LongTensor([self.EOS_token] * batch_size))
+
+    if self.use_cuda:
+      decoder_input = Variable(torch.cuda.LongTensor([self.EOS_token] * batch_size))
+    else:
+      decoder_input = Variable(torch.LongTensor([self.EOS_token] * batch_size))
+
+    output_logits = []
 
     for i in range(output_length):  # 1 for EOS token
       embedded = self.embedding(decoder_input)
@@ -112,9 +118,13 @@ class Seq2Seq(nn.Module):
       else:
         decoder_input = targets[i]
 
-      output_logits[i] = logits[0]
+      output_logits.append(logits)
 
+    output_logits = torch.cat(output_logits, 0)
     return output_logits
 
-  def _init_hidden(self, batch_size=1):
-    return Variable(torch.zeros(self.n_layers, batch_size, self.hidden_size))
+  def _init_state(self, batch_size=1):
+    state = Variable(torch.zeros(self.n_layers, batch_size, self.hidden_size), requires_grad=True)
+    if self.use_cuda:
+      state = state.cuda()
+    return state

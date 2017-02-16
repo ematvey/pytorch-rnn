@@ -58,7 +58,7 @@ class CopyTask():
       yield x, y
 
 
-def preproc(task, batch_size, eos_token=1):
+def preproc(task, batch_size, cuda=False, eos_token=1):
   xs = []
   ys = []
   for inputs, targets in task:
@@ -67,6 +67,9 @@ def preproc(task, batch_size, eos_token=1):
       if len(xs) >= batch_size:
         x = Variable(torch.LongTensor(xs)).transpose(1, 0).contiguous()
         y = Variable(torch.LongTensor(ys)).transpose(1, 0).contiguous()
+        if cuda:
+          x = x.cuda()
+          y = y.cuda()
         yield x, y
         xs = []
         ys = []

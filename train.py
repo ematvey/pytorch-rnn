@@ -11,15 +11,13 @@ import tasks
 from seq2seq import Seq2Seq
 
 
-def train(model, task, max_batches=1000, debug=False, verbose=False):
-  batch_size = 40
-
+def train(model, task, max_batches=1000, batch_size=40, cuda=False, debug=False, verbose=False):
   opt = optim.Adam(model.parameters())
 
   criterion = nn.CrossEntropyLoss()
 
   loss_track = []
-  ex_iter = tasks.preproc(task, batch_size=batch_size, eos_token=model.EOS_token)
+  ex_iter = tasks.preproc(task, batch_size=batch_size, cuda=cuda, eos_token=model.EOS_token)
   model.train()
   for i, (inputs, targets) in enumerate(ex_iter):
     opt.zero_grad()
@@ -31,12 +29,15 @@ def train(model, task, max_batches=1000, debug=False, verbose=False):
 
     loss_track.append(loss.data[0])
 
+    if verbose and i % 1 == 0:
+      print('loss: %.4f' % loss.data[0])
+
     if verbose and i % 100 == 0:
-      _, v = logits.data.topk(1)
-      inp = inputs.data.numpy().T.tolist()[0]
-      fc = v.squeeze(2).numpy().T.tolist()[0]
-      tg = targets.data.numpy().T.tolist()[0]
-      print("%.4f\n  inputs:  %s\n  predict: %s\n  target:  %s" % (loss.data[0], inp, fc, tg))
+      _, v = logits.cpu().data.topk(1)
+      inp = inputs.cpu().data.numpy().T.tolist()[0]
+      fc = v.cpu().squeeze(2).numpy().T.tolist()[0]
+      tg = targets.cpu().data.numpy().T.tolist()[0]
+      print("  inputs:  %s\n  predict: %s\n  target:  %s" % (inp, fc, tg))
 
     if i >= max_batches:
       break
@@ -48,20 +49,21 @@ def train(model, task, max_batches=1000, debug=False, verbose=False):
   return loss_track
 
 if __name__ == '__main__':
-  # -- debug hook --
-  import sys, ipdb, traceback
-  def info(type, value, tb):
-      traceback.print_exception(type, value, tb)
-      print
-      ipdb.pm()
-  sys.excepthook = info
+  task = tasks.CopyTask(seq_len=100, vocab_size=100)
 
-
-  task = tasks.ArithmeticTask()
+  cuda = torch.cuda.is_available()
 
   model = Seq2Seq(input_size=task.vocab_size,
                   output_size=task.vocab_size,
-                  hidden_size=100,
-                  embedding_size=task.vocab_size, n_layers=1, attention=True)
+                  hidden_size=256,
+                  embedding_size=task.vocab_size,
+                  n_layers=5,
+                  use_cuda=cuda,
+                  attention=True)
+  if cuda:
+    model = model.cuda()
 
-  train(model, task)
+  import time
+  t = time.time()
+  loss_track = train(model, task, batch_size=100, max_batches=10000, cuda=cuda, verbose=True)
+  print('done after %s' % (time.time() - t))
